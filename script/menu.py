@@ -8,20 +8,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QSize, QTimer
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QSize
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QInputDialog,
     QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QMessageBox, QProgressBar, QPushButton,
     QScrollArea, QSizePolicy, QStackedWidget, QTextBrowser,
-    QToolButton, QVBoxLayout, QWidget, QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView,
+    QToolButton, QVBoxLayout, QWidget, QTreeWidget, QTreeWidgetItem,
 )
 
 from .function import add_api, del_api, select_api, show_all_api
 from .util import AppError, validate_base_url
 from .providers import PROVIDERS, provider_label
-from . import metadata, activity
+from . import metadata
 
 
 def now_text() -> str:
@@ -60,28 +60,6 @@ def nav_icon(kind: int) -> QIcon:
         painter.drawLine(8, 16, 13, 16)
     painter.end()
     return QIcon(pixmap)
-
-
-class ActivityBars(QWidget):
-    def __init__(self, values=None):
-        super().__init__()
-        self.values = values or [0]*7
-        self.setFixedSize(84, 28)
-        self.setToolTip("OpenCode 近 7 天已完成 API 响应：" + " / ".join(map(str, self.values)))
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        maximum = max(max(self.values), 1)
-        for index, value in enumerate(self.values):
-            painter.fillRect(index*12, 24-int(value/maximum*20), 7, max(2, int(value/maximum*20)), QColor("#b9a67d" if value else "#484848"))
-
-
-class ActivityWorker(QObject):
-    finished = Signal(dict)
-
-    @Slot()
-    def run(self):
-        self.finished.emit(activity.load_activity())
 
 
 def result_state(result: dict[str, Any]) -> str:
@@ -364,7 +342,7 @@ class OverviewPage(QWidget):
         stats = QHBoxLayout()
         self.total = self.stat_card("账户", "0", "本地配置")
         self.healthy = self.stat_card("状态正常", "0", "最近查询")
-        self.recent = self.stat_card("7 日调用", "—", "OpenCode 完成响应")
+        self.recent = self.stat_card("供应商", str(len(PROVIDERS)), "官方接口与兼容服务")
         stats.addWidget(self.total)
         stats.addWidget(self.healthy)
         stats.addWidget(self.recent)
@@ -373,7 +351,6 @@ class OverviewPage(QWidget):
         self.provider_filter.addItem("全部供应商", "")
         self.provider_filter.currentIndexChanged.connect(lambda: self.update_data(self.cache))
         layout.addWidget(self.provider_filter, alignment=Qt.AlignmentFlag.AlignLeft)
-        self.activity_data = {'providers': {}, 'status': 'missing'}
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -424,10 +401,6 @@ class OverviewPage(QWidget):
             box.addWidget(serif_label(provider_label(provider), "providerTitle"))
             box.addWidget(QLabel(PROVIDERS.get(provider, {}).get('capability', '未支持'), objectName="hint"))
             box.addStretch()
-            telemetry = self.activity_data['providers'].get(provider)
-            if self.activity_data.get('status') == 'ready':
-                box.addWidget(QLabel(f"7 日 {telemetry['calls'] if telemetry else 0} 次", objectName="hint"))
-                box.addWidget(ActivityBars(telemetry['daily'] if telemetry else None))
             self.cards_layout.addWidget(header, row, 0, 1, 2)
             row += 1
             keys = [key for key in identifiers if key.split('/')[0] == provider]
@@ -446,7 +419,7 @@ class OverviewPage(QWidget):
         self.total.value_label.setText(str(len(identifiers)))  # type: ignore[attr-defined]
         success = sum(1 for item in cache.values() if result_state(item["result"]) == "success")
         self.healthy.value_label.setText(str(success))  # type: ignore[attr-defined]
-        self.recent.value_label.setText(str(sum(item['calls'] for item in self.activity_data['providers'].values())) if self.activity_data.get('status') == 'ready' else "—")
+        self.recent.value_label.setText(str(len(PROVIDERS)))
         self.summary.setText(f"{len(identifiers)} 个 API · {success} 个正常")
 
 
@@ -600,53 +573,6 @@ class HelpPage(QWidget):
         layout.addWidget(browser, 1)
 
 
-class TelemetryPage(QWidget):
-    refresh_requested = Signal()
-
-    def __init__(self):
-        super().__init__()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 28, 30, 24)
-        header = QHBoxLayout()
-        header.addWidget(serif_label("Telemetry", "pageTitle"))
-        header.addStretch()
-        refresh = QPushButton("刷新记录")
-        refresh.clicked.connect(self.refresh_requested)
-        header.addWidget(refresh)
-        layout.addLayout(header)
-        layout.addWidget(QLabel("02 / ACTIVITY     OpenCode 实际调用 · 近 7 个自然日", objectName="pageSubtitle"))
-        self.status = QLabel("读取本地调用记录…", objectName="muted")
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(['供应商', '完成响应 / 7 天', 'Tokens / 7 天', '7 天趋势', '最近调用'])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table.verticalHeader().hide()
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        layout.addWidget(self.table, 1)
-        note = QLabel("来源：OpenCode 本地响应元数据。按供应商汇总，不能区分同一供应商的不同密钥。次数为已完成且无错误的响应，不包含失败重试；其他客户端的调用不在此记录中。", objectName="hint")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-
-    def update_data(self, data):
-        self.table.setRowCount(0)
-        if data['status'] != 'ready':
-            self.status.setText("尚未找到 OpenCode 调用记录。" if data['status'] == 'missing' else "读取记录失败：" + data.get('error', '未知错误'))
-            return
-        stamp = data['updated_at'].replace('T', ' ')
-        self.status.setText(f"已连接 / {stamp} · 共 {sum(item['calls'] for item in data['providers'].values())} 次完成响应")
-        for provider, item in sorted(data['providers'].items(), key=lambda pair: -pair[1]['calls']):
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            stamp = datetime.fromtimestamp(item['last_at']/1000).strftime('%m-%d %H:%M')
-            values = [provider_label(provider), str(item['calls']), f"{item['tokens']:,}", '', stamp]
-            for column, value in enumerate(values):
-                self.table.setItem(row, column, QTableWidgetItem(value))
-            self.table.setCellWidget(row, 3, ActivityBars(item['daily']))
-            self.table.setRowHeight(row, 56)
-
-
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -656,14 +582,8 @@ class MainWindow(QMainWindow):
         self.cache: dict[str, dict[str, Any]] = {}
         self.thread: QThread | None = None
         self.worker: QueryWorker | None = None
-        self.activity_thread = None
-        self.activity_worker = None
         self._build()
         self.refresh_all()
-        self.activity_timer = QTimer(self)
-        self.activity_timer.timeout.connect(self.refresh_activity)
-        self.activity_timer.start(60000)
-        self.refresh_activity()
 
     def _build(self) -> None:
         central = QWidget()
@@ -684,19 +604,19 @@ class MainWindow(QMainWindow):
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
         self.nav_buttons: list[QToolButton] = []
-        for text, index in (("总览 / Console", 0), ("供应商 / Providers", 1), ("活跃度 / Telemetry", 2), ("使用说明 / Guide", 3)):
+        for text, icon_index, page_index in (("总览 / Console", 0, 0), ("供应商 / Providers", 1, 1), ("使用说明 / Guide", 3, 2)):
             button = QToolButton()
             button.setObjectName("navButton")
             button.setText(text)
-            button.setIcon(nav_icon(index))
+            button.setIcon(nav_icon(icon_index))
             button.setIconSize(QSize(22, 22))
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             button.setToolTip(text)
             button.setCheckable(True)
             button.setAutoRaise(True)
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            button.clicked.connect(lambda _checked, page=index: self.pages.setCurrentIndex(page))
-            self.nav_group.addButton(button, index)
+            button.clicked.connect(lambda _checked, page=page_index: self.pages.setCurrentIndex(page))
+            self.nav_group.addButton(button, page_index)
             self.nav_buttons.append(button)
             side.addWidget(button)
         self.nav_buttons[0].setChecked(True)
@@ -707,13 +627,10 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.overview = OverviewPage()
         self.manager = ApiManagerPage()
-        self.telemetry = TelemetryPage()
         self.help_page = HelpPage()
         self.pages.addWidget(self.overview)
         self.pages.addWidget(self.manager)
-        self.pages.addWidget(self.telemetry)
         self.pages.addWidget(self.help_page)
-        self.telemetry.refresh_requested.connect(self.refresh_activity)
         self.overview.add_requested.connect(self.add_api)
         self.overview.query_requested.connect(self.query_api)
         self.manager.query_requested.connect(self.query_api)
@@ -810,35 +727,12 @@ class MainWindow(QMainWindow):
             except (AppError, OSError) as exc:
                 QMessageBox.warning(self, "备注保存失败", str(exc))
 
-    def refresh_activity(self):
-        if self.activity_thread is not None:
-            return
-        self.activity_thread = QThread(self)
-        self.activity_worker = ActivityWorker()
-        self.activity_worker.moveToThread(self.activity_thread)
-        self.activity_thread.started.connect(self.activity_worker.run)
-        self.activity_worker.finished.connect(self.activity_loaded)
-        self.activity_worker.finished.connect(self.activity_thread.quit)
-        self.activity_thread.finished.connect(self.activity_worker.deleteLater)
-        self.activity_thread.finished.connect(self.activity_cleanup)
-        self.activity_thread.start()
-
-    def activity_loaded(self, data):
-        self.overview.activity_data = data
-        self.overview.update_data(self.cache)
-        self.telemetry.update_data(data)
-
-    def activity_cleanup(self):
-        self.activity_thread.deleteLater()
-        self.activity_thread = None
-        self.activity_worker = None
-
     def copy_result(self) -> None:
         QApplication.clipboard().setText(self.manager.result_text)
         self.manager.copy_button.setText("已复制")
 
     def closeEvent(self, event: Any) -> None:
-        if self.thread is not None or self.activity_thread is not None:
+        if self.thread is not None:
             event.ignore()
             return
         event.accept()

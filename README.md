@@ -49,17 +49,7 @@ python -m script.menu
 
 自定义服务配置额外保存 `base_url`；OpenRouter 额外保存 `query_mode`（`key` 或 `account`）。非秘密备注存储在 `.config/metadata.sqlite3`，不会重写原凭据或丢弃其中未知字段。`.config/` 整体忽略，不提交到 Git。
 
-## 实际 API 活跃度
-
-“活跃度 / Telemetry”页只读接入本机 OpenCode 数据库，按供应商显示近 7 个自然日的完成响应数、Token 数、每日趋势与最近调用时间。每 60 秒刷新，也可手动刷新。
-
-- 数据来源是 OpenCode 中已完成、无错误的 assistant 响应元数据，不是本工具余额查询次数。
-- Token 总量包括输入、输出、推理、缓存读写；没有读取对话正文、消息 parts、密钥或凭据表。
-- 无法区分同一供应商的不同密钥，也不能覆盖其他客户端的调用。因此活跃度显示在供应商标题与 Telemetry 页，避免归属到错误账户。
-- 未找到数据库或格式不兼容会显示状态，不将缺失记录解释成零调用。
-- 默认读取 `$XDG_DATA_HOME/opencode/opencode.db` 或 `~/.local/share/opencode/opencode.db`。可通过 `API_BALANCE_OPENCODE_DB` 指定另一个路径。数据库以只读方式打开，读取最多等待 8 秒，不创建表或索引。
-
-余额与接口结果来自当前会话手动查询，不跨会话缓存。余额请求失败会替换旧成功状态；请求期间不能删除账户或销毁窗口。
+余额、额度与接口结果只来自供应商官方接口的当前会话手动查询，不读取 OpenCode 数据库，也不收集本机使用记录。结果不跨会话缓存；请求失败会替换旧成功状态，请求期间不能删除账户或销毁窗口。
 
 ## 测试
 
@@ -67,7 +57,7 @@ python -m script.menu
 python -m unittest discover -s tests -v
 ```
 
-测试使用临时配置、模拟接口和合成活动数据库，不调用真实供应商。
+测试使用临时配置和模拟接口，不调用真实供应商。
 
 ## 接口参考
 

@@ -1,12 +1,9 @@
-import json
-import sqlite3
 import tempfile
 import unittest
-from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from script import activity, function, metadata, util
+from script import function, metadata, util
 
 
 class ProviderTests(unittest.TestCase):
@@ -56,7 +53,6 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result['kind'], 'connection')
         self.assertEqual(result['model_count'], 1)
         self.assertNotIn('balance', result)
-        self.assertEqual(activity.ALIASES['mimo'], 'xiaomi_mimo')
 
     def test_minimax_token_plan_quota_regions_and_excluded_models(self):
         payload = {'base_resp': {'status_code': 0}, 'model_remains': [
@@ -107,29 +103,6 @@ class ProviderTests(unittest.TestCase):
         with patch('script.function.requests.request', return_value=Mock(ok=True, status_code=302)):
             with self.assertRaises(util.AppError):
                 function.select_api(identifier)
-
-    def test_api_activity_uses_completed_responses_not_queries(self):
-        db_path = self.root / 'opencode.db'
-        now = datetime(2026, 9, 29, 12)
-        timestamp = int((now-timedelta(hours=1)).timestamp()*1000)
-        with sqlite3.connect(db_path) as db:
-            db.execute('CREATE TABLE message (data TEXT)')
-            data = {'role': 'assistant', 'providerID': 'opencode-go', 'modelID': 'model', 'time': {'completed': timestamp}, 'tokens': {'input': 10, 'output': 5, 'cache': {'read': 20}}, 'cost': 0.1}
-            db.execute('INSERT INTO message VALUES (?)', (json.dumps(data),))
-            data['error'] = {'message': 'failed'}
-            db.execute('INSERT INTO message VALUES (?)', (json.dumps(data),))
-            data['role'] = 'user'
-            db.execute('INSERT INTO message VALUES (?)', (json.dumps(data),))
-        before = db_path.read_bytes()
-        result = activity.load_activity(db_path, now)
-        self.assertEqual(result['status'], 'ready')
-        item = result['providers']['opencode_go']
-        self.assertEqual(item['calls'], 1)
-        self.assertEqual(item['tokens'], 35)
-        self.assertEqual(item['daily'][-1], 1)
-        self.assertEqual(db_path.read_bytes(), before)
-        self.assertEqual(activity.load_activity(self.root/'missing.db')['status'], 'missing')
-
 
 if __name__ == '__main__':
     unittest.main()

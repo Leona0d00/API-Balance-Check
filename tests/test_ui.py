@@ -21,8 +21,6 @@ class UiTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root_patch = patch.object(util, 'CONFIG_ROOT', Path(self.temp.name))
         self.root_patch.start()
-        self.activity_patch = patch('script.menu.activity.load_activity', return_value={'providers': {}, 'status': 'missing'})
-        self.activity_patch.start()
         util.write_api('deepseek', 'main', 'test-only')
         self.window = menu.MainWindow()
         self.window.show()
@@ -30,13 +28,7 @@ class UiTests(unittest.TestCase):
 
     def tearDown(self):
         self.wait_worker()
-        deadline = time.monotonic() + 3
-        while self.window.activity_thread is not None and time.monotonic() < deadline:
-            loop = QEventLoop()
-            QTimer.singleShot(10, loop.quit)
-            loop.exec()
         self.window.close()
-        self.activity_patch.stop()
         self.root_patch.stop()
         self.temp.cleanup()
 
