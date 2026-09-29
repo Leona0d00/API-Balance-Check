@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication, QLabel
-from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtCore import QEventLoop, QPoint, QTimer
 from script import menu, util
 
 
@@ -22,7 +22,7 @@ class UiTests(unittest.TestCase):
         self.root_patch = patch.object(util, 'CONFIG_ROOT', Path(self.temp.name))
         self.root_patch.start()
         util.write_api('deepseek', 'main', 'test-only')
-        self.window = menu.MainWindow()
+        self.window = menu.MainWindow(auto_query_codex=False)
         self.window.show()
         self.result = {'key': 'deepseek/main', 'provider': 'deepseek', 'kind': 'balance', 'data': {'is_available': True, 'balance_infos': [{'currency': 'CNY', 'total_balance': '12.50'}]}}
 
@@ -64,6 +64,49 @@ class UiTests(unittest.TestCase):
         self.assertIn('模拟网络超时', self.window.manager.result_text)
         self.assertTrue(self.window.manager.query_button.isEnabled())
 
+    @patch('script.menu.select_api')
+    def test_overview_query_updates_in_place(self, query):
+        query.return_value = self.result
+        self.window.pages.setCurrentWidget(self.window.overview)
+        self.window.query_api('deepseek/main', stay_on_overview=True)
+        self.wait_worker()
+        self.assertEqual(self.window.pages.currentWidget(), self.window.overview)
+        self.assertEqual(self.window.cache['deepseek/main']['result']['kind'], 'balance')
+
+    def test_overview_reflows_and_scrolls_header_without_oscillation(self):
+        util.write_api('xiaomi_mimo', 'win10', 'test-only')
+        util.write_api('zhipu', 'win10', 'test-only')
+        for index in range(8):
+            util.write_api('custom', f'account-{index}', 'test-only', base_url='https://example.org/v1')
+        self.window.refresh_all()
+        self.window.resize(1050, 800)
+        self.app.processEvents()
+        overview = self.window.overview
+        self.assertEqual(overview._column_count(), 2)
+        column_hosts = [overview.cards_layout.itemAt(index).widget() for index in range(overview.cards_layout.count())]
+        self.assertEqual(sorted(host.layout().count() for host in column_hosts), [6, 6])
+        self.assertTrue(all(overview.cards_layout.getItemPosition(index)[2:] == (1, 1)
+                            for index in range(overview.cards_layout.count())))
+        self.window.resize(1500, 800)
+        self.app.processEvents()
+        self.assertEqual(overview._column_count(), 3)
+        self.assertEqual(sum(overview.cards_layout.itemAt(index).widget().layout().count()
+                             for index in range(overview.cards_layout.count())), 12)
+        scroll_bar = overview.scroll.verticalScrollBar()
+        self.assertGreater(scroll_bar.maximum(), 0)
+        scroll_bar.setValue(scroll_bar.maximum())
+        self.app.processEvents()
+        self.assertEqual(scroll_bar.value(), scroll_bar.maximum())
+        self.assertLess(overview.hero.mapTo(overview.scroll.viewport(), QPoint(0, 0)).y(), 0)
+
+    def test_codex_subscription_appears_as_read_only_provider(self):
+        manager = self.window.manager
+        manager.select_identifier('codex_subscription/current')
+        self.assertEqual(manager.selected(), 'codex_subscription/current')
+        self.assertTrue(manager.query_button.isEnabled())
+        self.assertFalse(manager.note_button.isEnabled())
+        self.assertFalse(manager.delete_button.isEnabled())
+
     def test_result_replacement_hides_previous_content(self):
         view = self.window.manager.result_view
         view.render(self.result)
@@ -100,6 +143,16 @@ class UiTests(unittest.TestCase):
         dialog.accept()
         self.assertEqual(dialog.result(), 1)
         self.assertEqual(dialog.record()['custom']['base_url'], 'https://example.org/v1')
+
+    def test_add_dialog_exposes_builtin_codex_without_key_fields(self):
+        dialog = menu.AddApiDialog(self.window)
+        index = dialog.provider.findData('codex_subscription')
+        self.assertGreaterEqual(index, 0)
+        dialog.provider.setCurrentIndex(index)
+        self.assertFalse(dialog.form.isRowVisible(dialog.key))
+        self.assertIn('无需 API Key', dialog.capability.text())
+        dialog.accept()
+        self.assertEqual(dialog.result(), 1)
 
 
 if __name__ == '__main__':

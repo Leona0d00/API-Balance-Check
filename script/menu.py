@@ -8,11 +8,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QSize
+from PySide6.QtCore import QEvent, QObject, QThread, QTimer, Qt, Signal, Slot, QSize
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QInputDialog,
-    QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QGridLayout, QHBoxLayout, QLabel, QLayout, QLineEdit,
     QMainWindow, QMessageBox, QProgressBar, QPushButton,
     QScrollArea, QSizePolicy, QStackedWidget, QTextBrowser,
     QToolButton, QVBoxLayout, QWidget, QTreeWidget, QTreeWidgetItem,
@@ -63,6 +63,9 @@ def nav_icon(kind: int) -> QIcon:
 
 
 def result_state(result: dict[str, Any]) -> str:
+    if result.get('kind') == 'subscription_quota':
+        used = max(item['used'] for item in result['windows'])
+        return 'error' if used >= 90 else 'warning' if used >= 70 else 'success'
     if result.get('kind') == 'plan_quota':
         used = max(100 - value for item in result['quotas'] for value in (item['rolling'], item['weekly']))
         return 'error' if used >= 90 else 'warning' if used >= 70 else 'success'
@@ -133,23 +136,33 @@ class AddApiDialog(QDialog):
         self.error_label = QLabel(objectName="errorText")
         self.error_label.setWordWrap(True)
         layout.addWidget(self.error_label)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Save).setText("保存账户")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.button(QDialogButtonBox.StandardButton.Save).setText("保存账户")
+        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
         self.provider.currentIndexChanged.connect(self.provider_changed)
         self.provider_changed()
 
     def provider_changed(self):
         spec = PROVIDERS[self.provider.currentData()]
+        built_in = bool(spec.get('built_in'))
         self.base.setText(spec['base'])
         self.base.setReadOnly(self.provider.currentData() != 'custom')
         self.form.setRowVisible(self.query_mode, self.provider.currentData() == 'openrouter')
-        self.capability.setText(spec['capability'] + " · 不产生推理调用费用")
+        for field in (self.name, self.note, self.base, self.key):
+            self.form.setRowVisible(field, not built_in)
+        self.buttons.button(QDialogButtonBox.StandardButton.Save).setText("打开账户" if built_in else "保存账户")
+        if built_in:
+            self.capability.setText(spec['capability'] + " · 读取 Codex 当前登录账户，无需 API Key")
+        else:
+            self.capability.setText(spec['capability'] + " · 不产生推理调用费用")
 
     def accept(self):
+        if PROVIDERS[self.provider.currentData()].get('built_in'):
+            super().accept()
+            return
         if not self.name.text().strip() or not self.key.text().strip():
             self.error_label.setText("请填写账户标识与密钥。")
             return
@@ -202,6 +215,30 @@ class UsageResultWidget(QFrame):
         data = result.get("data", {})
         if result.get("kind") == "error":
             self.error(result.get("message", "查询失败"))
+        elif result.get('kind') == 'subscription_quota':
+            self.layout.addWidget(QLabel(f"ChatGPT {result['plan']} · Codex", objectName='cardTitle'))
+            for item in result['windows']:
+                row = QHBoxLayout()
+                row.addWidget(QLabel(item['label']))
+                row.addStretch()
+                row.addWidget(QLabel(f"剩余 {item['remaining']:g}%", objectName='usageValue'))
+                self.layout.addLayout(row)
+                progress = QProgressBar()
+                progress.setRange(0, 100)
+                progress.setValue(round(item['used']))
+                progress.setTextVisible(False)
+                progress.setProperty('state', 'error' if item['used'] >= 90 else 'warning' if item['used'] >= 70 else 'success')
+                self.layout.addWidget(progress)
+                reset = item.get('resets_at')
+                if isinstance(reset, (int, float)):
+                    self.layout.addWidget(QLabel("重置 " + datetime.fromtimestamp(reset).strftime('%m-%d %H:%M'), objectName='hint'))
+            if result.get('reserve_windows'):
+                reserve = result['reserve_windows'][0]
+                model = result.get('reserve_model') or 'GPT Reserve'
+                self.layout.addWidget(QLabel(f"{model} · 剩余 {reserve['remaining']:g}%", objectName='muted'))
+            credits = result.get('credits', {})
+            credit_text = '无限' if credits.get('unlimited') else credits.get('balance', '0')
+            self.layout.addWidget(QLabel(f"额外 credits：{credit_text}", objectName='hint'))
         elif result.get("kind") == "usage":
             for key, title in (("rolling", "5 小时"), ("weekly", "本周"), ("monthly", "本月")):
                 item = data[key]
@@ -284,8 +321,12 @@ class ApiCard(QFrame):
         layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(14)
         provider, name = identifier.split("/", 1)
+        provider_line = QLabel(f"{provider_label(provider)}  /  {PROVIDERS.get(provider, {}).get('capability', '状态')}", objectName="section")
+        provider_line.setWordWrap(True)
+        layout.addWidget(provider_line)
         header = QHBoxLayout()
-        title = QLabel(metadata.notes().get(identifier) or name, objectName="cardTitle")
+        default_name = "当前登录账户" if identifier == "codex_subscription/current" else name
+        title = QLabel(metadata.notes().get(identifier) or default_name, objectName="cardTitle")
         title.setWordWrap(True)
         header.addWidget(title, 1)
         state = result_state(cached["result"]) if cached else "unqueried"
@@ -320,13 +361,25 @@ class OverviewPage(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.cache: dict[str, dict[str, Any]] = {}
+        self.column_count = 0
         self.cards_layout = QGridLayout()
         self.cards_layout.setSpacing(16)
         self.cards_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.cards_layout.setColumnStretch(0, 1)
-        self.cards_layout.setColumnStretch(1, 1)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 28, 30, 24)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.viewport().installEventFilter(self)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(30, 28, 30, 24)
+        content_layout.setSpacing(10)
+        content_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinAndMaxSize)
+        self.hero = QWidget()
+        hero_layout = QVBoxLayout(self.hero)
+        hero_layout.setContentsMargins(0, 0, 0, 0)
+        hero_layout.setSpacing(10)
         header = QHBoxLayout()
         title = serif_label("Field Console", "pageTitle")
         header.addWidget(title)
@@ -337,27 +390,49 @@ class OverviewPage(QWidget):
         add = QPushButton("+ 添加账户", objectName="primary")
         add.clicked.connect(self.add_requested)
         header.addWidget(add)
-        layout.addLayout(header)
-        layout.addWidget(QLabel("01 / ACCOUNTS     余额、额度与供应商状态", objectName="pageSubtitle"))
+        hero_layout.addLayout(header)
+        hero_layout.addWidget(QLabel("01 / ACCOUNTS     余额、额度与供应商状态", objectName="pageSubtitle"))
         stats = QHBoxLayout()
-        self.total = self.stat_card("账户", "0", "本地配置")
+        self.total = self.stat_card("账户", "0", "API 配置与本机订阅")
         self.healthy = self.stat_card("状态正常", "0", "最近查询")
         self.recent = self.stat_card("供应商", str(len(PROVIDERS)), "官方接口与兼容服务")
         stats.addWidget(self.total)
         stats.addWidget(self.healthy)
         stats.addWidget(self.recent)
-        layout.addLayout(stats)
+        hero_layout.addLayout(stats)
+        content_layout.addWidget(self.hero)
         self.provider_filter = QComboBox()
         self.provider_filter.addItem("全部供应商", "")
         self.provider_filter.currentIndexChanged.connect(lambda: self.update_data(self.cache))
-        layout.addWidget(self.provider_filter, alignment=Qt.AlignmentFlag.AlignLeft)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content_layout.addWidget(self.provider_filter, alignment=Qt.AlignmentFlag.AlignLeft)
         cards_host = QWidget()
         cards_host.setLayout(self.cards_layout)
-        scroll.setWidget(cards_host)
-        layout.addWidget(scroll, 1)
+        content_layout.addWidget(cards_host)
+        self.scroll.setWidget(content)
+        layout.addWidget(self.scroll)
+
+    def _column_count(self, width: int | None = None) -> int:
+        width = self.scroll.viewport().width() if width is None else width
+        if width >= 1160:
+            return 3
+        if width >= 720:
+            return 2
+        return 1
+
+    def eventFilter(self, watched: Any, event: Any) -> bool:
+        if watched is self.scroll.viewport() and event.type() == QEvent.Type.Resize:
+            columns = self._column_count(event.size().width())
+            if columns != self.column_count:
+                self.column_count = columns
+                self.update_data(self.cache)
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event: Any) -> None:
+        super().resizeEvent(event)
+        columns = self._column_count()
+        if columns != self.column_count:
+            self.column_count = columns
+            self.update_data(self.cache)
 
     def stat_card(self, heading: str, value: str, hint: str) -> QFrame:
         card = QFrame(objectName="statCard")
@@ -377,7 +452,7 @@ class OverviewPage(QWidget):
             if item.widget():
                 item.widget().hide()
                 item.widget().deleteLater()
-        identifiers = show_all_api()
+        identifiers = ["codex_subscription/current", *show_all_api()]
         if not identifiers:
             empty = QLabel("还没有账户\n点击右上角“添加账户”开始使用。", objectName="emptyState")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -391,36 +466,32 @@ class OverviewPage(QWidget):
             self.provider_filter.addItem(provider_label(provider), provider)
         self.provider_filter.setCurrentIndex(max(0, self.provider_filter.findData(selected)))
         self.provider_filter.blockSignals(False)
-        row = 0
-        for provider in available:
-            if selected and provider != selected:
-                continue
-            header = QFrame(objectName="providerHeader")
-            box = QHBoxLayout(header)
-            box.setContentsMargins(0, 12, 0, 8)
-            box.addWidget(serif_label(provider_label(provider), "providerTitle"))
-            box.addWidget(QLabel(PROVIDERS.get(provider, {}).get('capability', '未支持'), objectName="hint"))
-            box.addStretch()
-            self.cards_layout.addWidget(header, row, 0, 1, 2)
-            row += 1
-            keys = [key for key in identifiers if key.split('/')[0] == provider]
-            cards = []
-            for index, identifier in enumerate(keys):
-                card = ApiCard(identifier, cache.get(identifier))
-                cards.append(card)
-                card.query_requested.connect(self.query_requested)
-                self.cards_layout.addWidget(card, row + index // 2, index % 2, alignment=Qt.AlignmentFlag.AlignTop)
-            for index in range(0, len(cards), 2):
-                pair = cards[index:index+2]
-                height = max(card.sizeHint().height() for card in pair)
-                for card in pair:
-                    card.setFixedHeight(height)
-            row += (len(keys)+1)//2
+        visible = [identifier for identifier in identifiers if not selected or identifier.split('/')[0] == selected]
+        columns = self._column_count()
+        self.column_count = columns
+        for column in range(3):
+            self.cards_layout.setColumnStretch(column, 1 if column < columns else 0)
+        column_layouts: list[QVBoxLayout] = []
+        column_heights = [0] * columns
+        for column in range(columns):
+            column_host = QWidget(objectName="cardColumn")
+            column_layout = QVBoxLayout(column_host)
+            column_layout.setContentsMargins(0, 0, 0, 0)
+            column_layout.setSpacing(16)
+            column_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+            self.cards_layout.addWidget(column_host, 0, column, alignment=Qt.AlignmentFlag.AlignTop)
+            column_layouts.append(column_layout)
+        for identifier in visible:
+            card = ApiCard(identifier, cache.get(identifier))
+            card.query_requested.connect(self.query_requested)
+            target_column = min(range(columns), key=column_heights.__getitem__)
+            column_layouts[target_column].addWidget(card)
+            column_heights[target_column] += card.sizeHint().height() + 16
         self.total.value_label.setText(str(len(identifiers)))  # type: ignore[attr-defined]
         success = sum(1 for item in cache.values() if result_state(item["result"]) == "success")
         self.healthy.value_label.setText(str(success))  # type: ignore[attr-defined]
         self.recent.value_label.setText(str(len(PROVIDERS)))
-        self.summary.setText(f"{len(identifiers)} 个 API · {success} 个正常")
+        self.summary.setText(f"{len(identifiers)} 个账户 · {success} 个正常")
 
 
 class ApiManagerPage(QWidget):
@@ -447,7 +518,9 @@ class ApiManagerPage(QWidget):
         self.result_view = UsageResultWidget()
         self.copy_button = QPushButton("复制结果")
         self.copy_button.setEnabled(False)
+        self.busy = False
         self.search.textChanged.connect(self.refresh)
+        self.list.itemSelectionChanged.connect(self._update_actions)
         self.list.itemDoubleClicked.connect(lambda _item: self.query())
         self.query_button.clicked.connect(self.query)
         self.delete_button.clicked.connect(self.delete)
@@ -495,7 +568,7 @@ class ApiManagerPage(QWidget):
         groups = {}
         notes = metadata.notes()
         query = self.search.text().strip().casefold()
-        for identifier in show_all_api():
+        for identifier in ["codex_subscription/current", *show_all_api()]:
             provider, name = identifier.split('/', 1)
             note = notes.get(identifier, '')
             haystack = f"{identifier} {provider_label(provider)} {note}".casefold()
@@ -505,11 +578,21 @@ class ApiManagerPage(QWidget):
                 groups[provider] = QTreeWidgetItem(self.list, [provider_label(provider)])
                 groups[provider].setFlags(Qt.ItemFlag.ItemIsEnabled)
                 groups[provider].setExpanded(True)
-            item = QTreeWidgetItem(groups[provider], [note or name])
+            default_name = "当前登录账户" if identifier == "codex_subscription/current" else name
+            item = QTreeWidgetItem(groups[provider], [note or default_name])
             item.setData(0, Qt.ItemDataRole.UserRole, identifier)
             item.setToolTip(0, identifier)
             if identifier == previous:
                 self.list.setCurrentItem(item)
+        self._update_actions()
+
+    def _update_actions(self) -> None:
+        identifier = self.selected()
+        provider = identifier.split('/', 1)[0] if identifier else ""
+        read_only = bool(PROVIDERS.get(provider, {}).get('built_in'))
+        self.query_button.setEnabled(not self.busy and bool(identifier))
+        self.note_button.setEnabled(not self.busy and bool(identifier) and not read_only)
+        self.delete_button.setEnabled(not self.busy and bool(identifier) and not read_only)
 
     def select_identifier(self, identifier):
         for index in range(self.list.topLevelItemCount()):
@@ -535,9 +618,8 @@ class ApiManagerPage(QWidget):
             self.delete_requested.emit(identifier)
 
     def set_busy(self, busy: bool) -> None:
-        self.query_button.setEnabled(not busy)
-        self.delete_button.setEnabled(not busy)
-        self.note_button.setEnabled(not busy)
+        self.busy = busy
+        self._update_actions()
         self.query_button.setText("查询中..." if busy else "查询")
 
     def show_loading(self) -> None:
@@ -574,7 +656,7 @@ class HelpPage(QWidget):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, auto_query_codex: bool = True) -> None:
         super().__init__()
         self.setWindowTitle("API 余额查询")
         self.resize(1120, 720)
@@ -582,8 +664,11 @@ class MainWindow(QMainWindow):
         self.cache: dict[str, dict[str, Any]] = {}
         self.thread: QThread | None = None
         self.worker: QueryWorker | None = None
+        self.query_stays_on_overview = False
         self._build()
         self.refresh_all()
+        if auto_query_codex:
+            QTimer.singleShot(0, lambda: self.query_api("codex_subscription/current", True))
 
     def _build(self) -> None:
         central = QWidget()
@@ -632,8 +717,8 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.manager)
         self.pages.addWidget(self.help_page)
         self.overview.add_requested.connect(self.add_api)
-        self.overview.query_requested.connect(self.query_api)
-        self.manager.query_requested.connect(self.query_api)
+        self.overview.query_requested.connect(lambda identifier: self.query_api(identifier, True))
+        self.manager.query_requested.connect(lambda identifier: self.query_api(identifier, False))
         self.manager.add_requested.connect(self.add_api)
         self.manager.delete_requested.connect(self.remove_api)
         self.manager.note_requested.connect(self.edit_note)
@@ -644,18 +729,20 @@ class MainWindow(QMainWindow):
         self.manager.refresh()
         self.overview.update_data(self.cache)
 
-    def query_api(self, identifier: str) -> None:
+    def query_api(self, identifier: str, stay_on_overview: bool = False) -> None:
         if self.thread is not None:
             return
+        self.query_stays_on_overview = stay_on_overview
         self.manager.set_busy(True)
-        self.manager.show_loading()
-        self.manager.result_text = ""
-        self.manager.copy_button.setText("复制结果")
-        self.manager.copy_button.setEnabled(False)
-        self.manager.search.clear()
-        self.manager.select_identifier(identifier)
-        self.pages.setCurrentWidget(self.manager)
-        self.nav_buttons[1].setChecked(True)
+        if not self.query_stays_on_overview:
+            self.manager.show_loading()
+            self.manager.result_text = ""
+            self.manager.copy_button.setText("复制结果")
+            self.manager.copy_button.setEnabled(False)
+            self.manager.search.clear()
+            self.manager.select_identifier(identifier)
+            self.pages.setCurrentWidget(self.manager)
+            self.nav_buttons[1].setChecked(True)
         self.thread = QThread(self)
         self.worker = QueryWorker(identifier)
         self.worker.moveToThread(self.thread)
@@ -688,11 +775,18 @@ class MainWindow(QMainWindow):
             self.thread.deleteLater()
         self.thread = None
         self.worker = None
+        self.query_stays_on_overview = False
         self.manager.set_busy(False)
 
     def add_api(self) -> None:
         dialog = AddApiDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            if PROVIDERS[dialog.provider.currentData()].get('built_in'):
+                self.manager.search.clear()
+                self.manager.refresh()
+                self.manager.select_identifier("codex_subscription/current")
+                self.query_api("codex_subscription/current", False)
+                return
             try:
                 keys = add_api(dialog.record())
                 if dialog.note.text().strip():
@@ -703,6 +797,9 @@ class MainWindow(QMainWindow):
 
     def remove_api(self, identifier: str) -> None:
         if self.thread is not None:
+            return
+        provider = identifier.split('/', 1)[0]
+        if PROVIDERS.get(provider, {}).get('built_in'):
             return
         if QMessageBox.question(self, "确认删除", f"确定删除 {identifier} 吗？") != QMessageBox.StandardButton.Yes:
             return
@@ -718,6 +815,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "删除失败", str(exc))
 
     def edit_note(self, identifier):
+        provider = identifier.split('/', 1)[0]
+        if PROVIDERS.get(provider, {}).get('built_in'):
+            return
         current = metadata.notes().get(identifier, '')
         text, accepted = QInputDialog.getText(self, "账户备注", "显示备注（留空恢复账户标识）", text=current)
         if accepted:
@@ -742,7 +842,14 @@ def format_result(result: dict[str, Any]) -> str:
     provider = result["provider"]
     data = result.get("data", {})
     lines = [f"API: {result['key']}", f"状态：{dict(success='正常', warning='注意', error='异常')[result_state(result)]}", f"查询时间：{now_text()}", ""]
-    if provider == "deepseek":
+    if result.get('kind') == 'subscription_quota':
+        lines.append(f"套餐：ChatGPT {result['plan']}")
+        for item in result['windows']:
+            lines.append(f"{item['label']}：已用 {item['used']:g}%，剩余 {item['remaining']:g}%")
+        if result.get('reserve_windows'):
+            reserve = result['reserve_windows'][0]
+            lines.append(f"{result.get('reserve_model') or 'GPT Reserve'}：剩余 {reserve['remaining']:g}%")
+    elif provider == "deepseek":
         lines.append(f"账户可用：{data.get('is_available', 'unknown')}")
         for info in data.get("balance_infos", []):
             lines.extend([
@@ -772,7 +879,11 @@ def format_result(result: dict[str, Any]) -> str:
 
 
 def format_error(identifier: str, message: str) -> str:
-    return f"API：{identifier}\n状态：查询失败\n查询时间：{now_text()}\n\n错误信息：\n{message}\n\n建议：检查 API Key、网络连接和供应商服务状态。"
+    if identifier == "codex_subscription/current":
+        suggestion = "确认已安装并登录 Codex 桌面端或 CLI，然后重试。"
+    else:
+        suggestion = "检查 API Key、网络连接和供应商服务状态。"
+    return f"API：{identifier}\n状态：查询失败\n查询时间：{now_text()}\n\n错误信息：\n{message}\n\n建议：{suggestion}"
 
 
 def main() -> None:

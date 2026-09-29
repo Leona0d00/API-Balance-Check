@@ -9,6 +9,7 @@ import requests
 
 from .util import AppError, fuzzy_search, find_api, list_apis, parse_batch_payload, write_api, delete_api
 from .providers import PROVIDERS
+from .codex_usage import read_codex_usage
 
 
 TIMEOUT = (5, 15)
@@ -46,6 +47,8 @@ def del_api(identifier: str) -> None:
 
 
 def select_api(identifier: str) -> dict[str, Any]:
+    if identifier == "codex_subscription/current":
+        return read_codex_usage()
     record = find_api(identifier)
     if not record["apikey"].strip():
         raise AppError(f"API key is empty: {identifier}")

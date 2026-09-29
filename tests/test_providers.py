@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from script import function, metadata, util
+from script import codex_usage, function, metadata, util
 
 
 class ProviderTests(unittest.TestCase):
@@ -53,6 +53,37 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result['kind'], 'connection')
         self.assertEqual(result['model_count'], 1)
         self.assertNotIn('balance', result)
+
+    def test_codex_subscription_quota_normalization(self):
+        payload = {'rateLimitsByLimitId': {
+            'codex': {
+                'planType': 'plus',
+                'primary': {'usedPercent': 40, 'windowDurationMins': 300, 'resetsAt': 100},
+                'secondary': {'usedPercent': 17, 'windowDurationMins': 10080, 'resetsAt': 200},
+                'credits': {'hasCredits': False, 'unlimited': False, 'balance': '0'},
+            },
+            'base_model_inference': {
+                'normalModelSlug': 'gpt-reserve',
+                'primary': {'usedPercent': 5, 'windowDurationMins': 10080, 'resetsAt': 300},
+            },
+        }}
+        result = codex_usage.normalize_rate_limits(payload)
+        self.assertEqual(result['plan'], 'Plus')
+        self.assertEqual(result['windows'][0]['remaining'], 60)
+        self.assertEqual(result['windows'][1]['label'], '本周')
+        self.assertEqual(result['reserve_model'], 'gpt-reserve')
+        with patch('script.function.read_codex_usage', return_value=result) as read:
+            self.assertEqual(function.select_api('codex_subscription/current')['kind'], 'subscription_quota')
+            read.assert_called_once_with()
+
+    def test_codex_desktop_executable_fallback(self):
+        executable = self.root / 'OpenAI' / 'Codex' / 'bin' / 'version-id' / 'codex.exe'
+        executable.parent.mkdir(parents=True)
+        executable.touch()
+        with patch('script.codex_usage.shutil.which', return_value=None), \
+                patch.dict('script.codex_usage.os.environ', {'LOCALAPPDATA': str(self.root)}, clear=True), \
+                patch('script.codex_usage.os.name', 'nt'):
+            self.assertEqual(codex_usage.find_codex_executable(), str(executable))
 
     def test_minimax_token_plan_quota_regions_and_excluded_models(self):
         payload = {'base_resp': {'status_code': 0}, 'model_remains': [
