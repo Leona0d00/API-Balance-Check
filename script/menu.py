@@ -12,7 +12,7 @@ from PySide6.QtCore import QEvent, QObject, QThread, QTimer, Qt, Signal, Slot, Q
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QInputDialog,
-    QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QGridLayout, QHBoxLayout, QLabel, QLayout, QLineEdit,
     QMainWindow, QMessageBox, QProgressBar, QPushButton,
     QScrollArea, QSizePolicy, QStackedWidget, QTextBrowser,
     QToolButton, QVBoxLayout, QWidget, QTreeWidget, QTreeWidgetItem,
@@ -358,7 +358,16 @@ class OverviewPage(QWidget):
         self.cards_layout.setSpacing(16)
         self.cards_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 28, 30, 24)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.viewport().installEventFilter(self)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(30, 28, 30, 24)
+        content_layout.setSpacing(10)
+        content_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinAndMaxSize)
         self.hero = QWidget()
         hero_layout = QVBoxLayout(self.hero)
         hero_layout.setContentsMargins(0, 0, 0, 0)
@@ -383,20 +392,16 @@ class OverviewPage(QWidget):
         stats.addWidget(self.healthy)
         stats.addWidget(self.recent)
         hero_layout.addLayout(stats)
-        layout.addWidget(self.hero)
+        content_layout.addWidget(self.hero)
         self.provider_filter = QComboBox()
         self.provider_filter.addItem("全部供应商", "")
         self.provider_filter.currentIndexChanged.connect(lambda: self.update_data(self.cache))
-        layout.addWidget(self.provider_filter, alignment=Qt.AlignmentFlag.AlignLeft)
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll.viewport().installEventFilter(self)
+        content_layout.addWidget(self.provider_filter, alignment=Qt.AlignmentFlag.AlignLeft)
         cards_host = QWidget()
         cards_host.setLayout(self.cards_layout)
-        self.scroll.setWidget(cards_host)
-        self.scroll.verticalScrollBar().valueChanged.connect(self._scroll_changed)
-        layout.addWidget(self.scroll, 1)
+        content_layout.addWidget(cards_host)
+        self.scroll.setWidget(content)
+        layout.addWidget(self.scroll)
 
     def _column_count(self, width: int | None = None) -> int:
         width = self.scroll.viewport().width() if width is None else width
@@ -413,12 +418,6 @@ class OverviewPage(QWidget):
                 self.column_count = columns
                 self.update_data(self.cache)
         return super().eventFilter(watched, event)
-
-    def _scroll_changed(self, value: int) -> None:
-        if value > 18 and self.hero.isVisible():
-            self.hero.hide()
-        elif value == 0 and not self.hero.isVisible():
-            self.hero.show()
 
     def resizeEvent(self, event: Any) -> None:
         super().resizeEvent(event)
@@ -511,7 +510,9 @@ class ApiManagerPage(QWidget):
         self.result_view = UsageResultWidget()
         self.copy_button = QPushButton("复制结果")
         self.copy_button.setEnabled(False)
+        self.busy = False
         self.search.textChanged.connect(self.refresh)
+        self.list.itemSelectionChanged.connect(self._update_actions)
         self.list.itemDoubleClicked.connect(lambda _item: self.query())
         self.query_button.clicked.connect(self.query)
         self.delete_button.clicked.connect(self.delete)
@@ -559,7 +560,7 @@ class ApiManagerPage(QWidget):
         groups = {}
         notes = metadata.notes()
         query = self.search.text().strip().casefold()
-        for identifier in show_all_api():
+        for identifier in ["codex_subscription/current", *show_all_api()]:
             provider, name = identifier.split('/', 1)
             note = notes.get(identifier, '')
             haystack = f"{identifier} {provider_label(provider)} {note}".casefold()
@@ -569,11 +570,21 @@ class ApiManagerPage(QWidget):
                 groups[provider] = QTreeWidgetItem(self.list, [provider_label(provider)])
                 groups[provider].setFlags(Qt.ItemFlag.ItemIsEnabled)
                 groups[provider].setExpanded(True)
-            item = QTreeWidgetItem(groups[provider], [note or name])
+            default_name = "当前登录账户" if identifier == "codex_subscription/current" else name
+            item = QTreeWidgetItem(groups[provider], [note or default_name])
             item.setData(0, Qt.ItemDataRole.UserRole, identifier)
             item.setToolTip(0, identifier)
             if identifier == previous:
                 self.list.setCurrentItem(item)
+        self._update_actions()
+
+    def _update_actions(self) -> None:
+        identifier = self.selected()
+        provider = identifier.split('/', 1)[0] if identifier else ""
+        read_only = bool(PROVIDERS.get(provider, {}).get('built_in'))
+        self.query_button.setEnabled(not self.busy and bool(identifier))
+        self.note_button.setEnabled(not self.busy and bool(identifier) and not read_only)
+        self.delete_button.setEnabled(not self.busy and bool(identifier) and not read_only)
 
     def select_identifier(self, identifier):
         for index in range(self.list.topLevelItemCount()):
@@ -599,9 +610,8 @@ class ApiManagerPage(QWidget):
             self.delete_requested.emit(identifier)
 
     def set_busy(self, busy: bool) -> None:
-        self.query_button.setEnabled(not busy)
-        self.delete_button.setEnabled(not busy)
-        self.note_button.setEnabled(not busy)
+        self.busy = busy
+        self._update_actions()
         self.query_button.setText("查询中..." if busy else "查询")
 
     def show_loading(self) -> None:
@@ -774,6 +784,9 @@ class MainWindow(QMainWindow):
     def remove_api(self, identifier: str) -> None:
         if self.thread is not None:
             return
+        provider = identifier.split('/', 1)[0]
+        if PROVIDERS.get(provider, {}).get('built_in'):
+            return
         if QMessageBox.question(self, "确认删除", f"确定删除 {identifier} 吗？") != QMessageBox.StandardButton.Yes:
             return
         try:
@@ -788,6 +801,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "删除失败", str(exc))
 
     def edit_note(self, identifier):
+        provider = identifier.split('/', 1)[0]
+        if PROVIDERS.get(provider, {}).get('built_in'):
+            return
         current = metadata.notes().get(identifier, '')
         text, accepted = QInputDialog.getText(self, "账户备注", "显示备注（留空恢复账户标识）", text=current)
         if accepted:

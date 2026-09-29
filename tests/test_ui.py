@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication, QLabel
-from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtCore import QEventLoop, QPoint, QTimer
 from script import menu, util
 
 
@@ -73,27 +73,39 @@ class UiTests(unittest.TestCase):
         self.assertEqual(self.window.pages.currentWidget(), self.window.overview)
         self.assertEqual(self.window.cache['deepseek/main']['result']['kind'], 'balance')
 
-    def test_overview_reflows_and_collapses_header(self):
+    def test_overview_reflows_and_scrolls_header_without_oscillation(self):
         util.write_api('xiaomi_mimo', 'win10', 'test-only')
         util.write_api('zhipu', 'win10', 'test-only')
+        for index in range(8):
+            util.write_api('custom', f'account-{index}', 'test-only', base_url='https://example.org/v1')
         self.window.refresh_all()
         self.window.resize(1050, 800)
         self.app.processEvents()
         overview = self.window.overview
         self.assertEqual(overview._column_count(), 2)
         column_hosts = [overview.cards_layout.itemAt(index).widget() for index in range(overview.cards_layout.count())]
-        self.assertEqual(sorted(host.layout().count() for host in column_hosts), [2, 2])
+        self.assertEqual(sorted(host.layout().count() for host in column_hosts), [6, 6])
         self.assertTrue(all(overview.cards_layout.getItemPosition(index)[2:] == (1, 1)
                             for index in range(overview.cards_layout.count())))
         self.window.resize(1500, 800)
         self.app.processEvents()
         self.assertEqual(overview._column_count(), 3)
         self.assertEqual(sum(overview.cards_layout.itemAt(index).widget().layout().count()
-                             for index in range(overview.cards_layout.count())), 4)
-        overview._scroll_changed(30)
-        self.assertFalse(overview.hero.isVisible())
-        overview._scroll_changed(0)
-        self.assertTrue(overview.hero.isVisible())
+                             for index in range(overview.cards_layout.count())), 12)
+        scroll_bar = overview.scroll.verticalScrollBar()
+        self.assertGreater(scroll_bar.maximum(), 0)
+        scroll_bar.setValue(scroll_bar.maximum())
+        self.app.processEvents()
+        self.assertEqual(scroll_bar.value(), scroll_bar.maximum())
+        self.assertLess(overview.hero.mapTo(overview.scroll.viewport(), QPoint(0, 0)).y(), 0)
+
+    def test_codex_subscription_appears_as_read_only_provider(self):
+        manager = self.window.manager
+        manager.select_identifier('codex_subscription/current')
+        self.assertEqual(manager.selected(), 'codex_subscription/current')
+        self.assertTrue(manager.query_button.isEnabled())
+        self.assertFalse(manager.note_button.isEnabled())
+        self.assertFalse(manager.delete_button.isEnabled())
 
     def test_result_replacement_hides_previous_content(self):
         view = self.window.manager.result_view
