@@ -144,6 +144,16 @@ class UiTests(unittest.TestCase):
         self.assertEqual(dialog.result(), 1)
         self.assertEqual(dialog.record()['custom']['base_url'], 'https://example.org/v1')
 
+    def test_add_dialog_exposes_builtin_codex_without_key_fields(self):
+        dialog = menu.AddApiDialog(self.window)
+        index = dialog.provider.findData('codex_subscription')
+        self.assertGreaterEqual(index, 0)
+        dialog.provider.setCurrentIndex(index)
+        self.assertFalse(dialog.form.isRowVisible(dialog.key))
+        self.assertIn('无需 API Key', dialog.capability.text())
+        dialog.accept()
+        self.assertEqual(dialog.result(), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

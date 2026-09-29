@@ -107,8 +107,6 @@ class AddApiDialog(QDialog):
         layout.addWidget(serif_label("Connect Provider", "dialogTitle"))
         self.provider = QComboBox()
         for key, spec in PROVIDERS.items():
-            if spec.get('built_in'):
-                continue
             self.provider.addItem(f"{spec['group']} / {spec['label']}", key)
         self.capability = QLabel(objectName="hint")
         self.capability.setWordWrap(True)
@@ -138,23 +136,33 @@ class AddApiDialog(QDialog):
         self.error_label = QLabel(objectName="errorText")
         self.error_label.setWordWrap(True)
         layout.addWidget(self.error_label)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Save).setText("保存账户")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.button(QDialogButtonBox.StandardButton.Save).setText("保存账户")
+        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
         self.provider.currentIndexChanged.connect(self.provider_changed)
         self.provider_changed()
 
     def provider_changed(self):
         spec = PROVIDERS[self.provider.currentData()]
+        built_in = bool(spec.get('built_in'))
         self.base.setText(spec['base'])
         self.base.setReadOnly(self.provider.currentData() != 'custom')
         self.form.setRowVisible(self.query_mode, self.provider.currentData() == 'openrouter')
-        self.capability.setText(spec['capability'] + " · 不产生推理调用费用")
+        for field in (self.name, self.note, self.base, self.key):
+            self.form.setRowVisible(field, not built_in)
+        self.buttons.button(QDialogButtonBox.StandardButton.Save).setText("打开账户" if built_in else "保存账户")
+        if built_in:
+            self.capability.setText(spec['capability'] + " · 读取 Codex 当前登录账户，无需 API Key")
+        else:
+            self.capability.setText(spec['capability'] + " · 不产生推理调用费用")
 
     def accept(self):
+        if PROVIDERS[self.provider.currentData()].get('built_in'):
+            super().accept()
+            return
         if not self.name.text().strip() or not self.key.text().strip():
             self.error_label.setText("请填写账户标识与密钥。")
             return
@@ -773,6 +781,12 @@ class MainWindow(QMainWindow):
     def add_api(self) -> None:
         dialog = AddApiDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            if PROVIDERS[dialog.provider.currentData()].get('built_in'):
+                self.manager.search.clear()
+                self.manager.refresh()
+                self.manager.select_identifier("codex_subscription/current")
+                self.query_api("codex_subscription/current", False)
+                return
             try:
                 keys = add_api(dialog.record())
                 if dialog.note.text().strip():
@@ -865,7 +879,11 @@ def format_result(result: dict[str, Any]) -> str:
 
 
 def format_error(identifier: str, message: str) -> str:
-    return f"API：{identifier}\n状态：查询失败\n查询时间：{now_text()}\n\n错误信息：\n{message}\n\n建议：检查 API Key、网络连接和供应商服务状态。"
+    if identifier == "codex_subscription/current":
+        suggestion = "确认已安装并登录 Codex 桌面端或 CLI，然后重试。"
+    else:
+        suggestion = "检查 API Key、网络连接和供应商服务状态。"
+    return f"API：{identifier}\n状态：查询失败\n查询时间：{now_text()}\n\n错误信息：\n{message}\n\n建议：{suggestion}"
 
 
 def main() -> None:

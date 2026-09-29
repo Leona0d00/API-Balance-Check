@@ -10,12 +10,35 @@ import shutil
 import subprocess
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from .util import AppError
 
 
 TIMEOUT_SECONDS = 10
+
+
+def find_codex_executable() -> str | None:
+    executable = shutil.which("codex")
+    if executable:
+        return executable
+    if os.name != "nt":
+        return None
+
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if not local_app_data:
+        return None
+    root = Path(local_app_data)
+    candidates = [
+        *root.glob("OpenAI/Codex/bin/*/codex.exe"),
+        root / "OpenAI" / "Codex" / "bin" / "codex.exe",
+        root / "Programs" / "Codex" / "codex.exe",
+    ]
+    existing = [path for path in candidates if path.is_file()]
+    if not existing:
+        return None
+    return str(max(existing, key=lambda path: path.stat().st_mtime_ns))
 
 
 def _window_label(minutes: int | float | None) -> str:
@@ -85,9 +108,9 @@ def normalize_rate_limits(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def read_codex_usage() -> dict[str, Any]:
-    executable = shutil.which("codex")
+    executable = find_codex_executable()
     if not executable:
-        raise AppError("未找到 Codex CLI，无法读取当前订阅额度。")
+        raise AppError("未找到 Codex 桌面端或 CLI，无法读取当前订阅额度。")
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     try:
         process = subprocess.Popen(

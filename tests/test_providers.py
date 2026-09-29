@@ -76,6 +76,15 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(function.select_api('codex_subscription/current')['kind'], 'subscription_quota')
             read.assert_called_once_with()
 
+    def test_codex_desktop_executable_fallback(self):
+        executable = self.root / 'OpenAI' / 'Codex' / 'bin' / 'version-id' / 'codex.exe'
+        executable.parent.mkdir(parents=True)
+        executable.touch()
+        with patch('script.codex_usage.shutil.which', return_value=None), \
+                patch.dict('script.codex_usage.os.environ', {'LOCALAPPDATA': str(self.root)}, clear=True), \
+                patch('script.codex_usage.os.name', 'nt'):
+            self.assertEqual(codex_usage.find_codex_executable(), str(executable))
+
     def test_minimax_token_plan_quota_regions_and_excluded_models(self):
         payload = {'base_resp': {'status_code': 0}, 'model_remains': [
             {'model_name': 'general', 'current_interval_remaining_percent': 64,
