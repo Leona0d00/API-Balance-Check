@@ -38,7 +38,7 @@ class AppTests(unittest.TestCase):
 
     @patch("script.function.requests.request")
     def test_deepseek_query(self, request):
-        response = Mock(ok=True)
+        response = Mock(ok=True, status_code=200)
         response.json.return_value = {
             "is_available": True,
             "balance_infos": [{"currency": "USD", "total_balance": "1.20"}],
