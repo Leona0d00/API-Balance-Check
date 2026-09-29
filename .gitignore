@@ -1,6 +1,6 @@
 # Local configuration and secrets
 .config/
-.vscode/
+.vscode
 .env
 .env.*
 *.secret
