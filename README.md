@@ -1,169 +1,81 @@
-# API 余额查询
+# Field Console / API 余额查询
 
-桌面 GUI 工具，用于管理并查询以下 API：
+PySide6 桌面控制台，按供应商管理 API 账户、备注、余额与调用活跃度。界面使用系统衬线标题与无衬线正文，中性深灰纸感配色、1px 网格和统一矢量导航图标，无字体文件依赖。
 
-- `opencode_go`：查询 OpenCode Go 的 5 小时、周、月用量。
-- `deepseek`：查询 DeepSeek 官方账户余额。
-- `zhipu`：优先尝试智谱控制台内部余额接口；失败后使用官方模型接口验证 API Key，并提示到控制台查看余额。
+## 运行
 
-## 环境
-
-- Python 3.9 或更高版本
-- Windows、macOS 或 Linux
-- PySide6
-
-## 安装与运行
-
-### 方式一：使用 pip
+Python 3.9+，Windows / macOS / Linux。
 
 ```bash
 python -m venv .venv
-```
-
-Windows：
-
-```bash
-.venv\Scripts\activate
-```
-
-macOS/Linux：
-
-```bash
-source .venv/bin/activate
-```
-
-进入虚拟环境后安装依赖并运行：
-
-```bash
 pip install -r requirements.txt
 python -m script.menu
 ```
 
-### 方式二：使用 conda
+请先激活虚拟环境；Windows 使用 `.venv\Scripts\activate`，macOS / Linux 使用 `source .venv/bin/activate`。
 
-```bash
-conda create -n api-balance python=3.9
-conda activate api-balance
-pip install -r requirements.txt
-python -m script.menu
-```
+## 供应商能力
 
-必须在项目根目录运行命令。API Key 只保存在本地 `.config` 目录，界面不会展示完整密钥。
+| 供应商 | 功能 | 说明 |
+| --- | --- | --- |
+| OpenCode Go | 5 小时、周、月用量 | 使用 Go usage 接口 |
+| DeepSeek | 账户余额 | 充值余额与赠金 |
+| Kimi / Moonshot CN、Global | 账户余额 | 分别使用国内与国际 API 地址，币种 CNY / USD |
+| SiliconFlow | 账户余额 | 使用 user/info 的 totalBalance |
+| OpenRouter | 密钥额度和实际消耗 / 账户余额 | 普通密钥查询自身额度与日、周、月消耗；账户余额模式需要管理密钥 |
+| 智谱 | 尝试余额，失败后检查密钥 | 保留原有控制台接口回退策略 |
+| OpenAI、Anthropic、Gemini、Groq、Mistral、OpenCode Zen | 模型列表连接检查 | 不提供余额；成功获取模型列表不代表推理或计费一定可用 |
+| OpenAI Compatible | 自定义 HTTPS Base URL 连接检查 | 支持代理服务，不假设它有余额接口 |
 
-## 配置格式
+供应商能力与基础地址集中在 `script/providers.py`；增加一个兼容服务无需修改 UI 布局。
 
-每个 API 使用独立目录和 JSON 文件，唯一键格式为 `provider/api_name`：
+## 账户与备注
+
+“供应商 / Providers”页中添加账户，在供应商下面管理多个密钥。搜索匹配供应商名称、账户标识或备注。选中账户后点击“备注”，修改显示名称；留空恢复账户标识。备注不改变 provider/api_name 或密钥。
+
+凭据保留在原格式：
 
 ```text
-.config/
-├── opencode_go/
-│   └── my_account/
-│       └── my_account.json
-├── deepseek/
-│   └── main/
-│       └── main.json
-└── zhipu/
-    └── main/
-        └── main.json
+.config/<provider>/<api_name>/<api_name>.json
 ```
 
-文件内容：
+示例使用占位密钥：
 
 ```json
-{
-  "apikey": "your-api-key"
-}
+{"apikey": "YOUR_API_KEY"}
 ```
 
-GUI 中点击“添加 API”后，按照向导依次选择供应商、填写 `api_name` 和输入 `apikey`，无需手动编写 JSON。API Key 输入框默认隐藏内容。
+自定义服务配置额外保存 `base_url`；OpenRouter 额外保存 `query_mode`（`key` 或 `account`）。非秘密备注存储在 `.config/metadata.sqlite3`，不会重写原凭据或丢弃其中未知字段。`.config/` 整体忽略，不提交到 Git。
 
-## 接口说明
+## 实际 API 活跃度
 
-OpenCode Go 使用：
+“活跃度 / Telemetry”页只读接入本机 OpenCode 数据库，按供应商显示近 7 个自然日的完成响应数、Token 数、每日趋势与最近调用时间。每 60 秒刷新，也可手动刷新。
 
-```text
-GET https://opencode.ai/zen/go/v1/usage
-Authorization: Bearer <API_KEY>
-```
+- 数据来源是 OpenCode 中已完成、无错误的 assistant 响应元数据，不是本工具余额查询次数。
+- Token 总量包括输入、输出、推理、缓存读写；没有读取对话正文、消息 parts、密钥或凭据表。
+- 无法区分同一供应商的不同密钥，也不能覆盖其他客户端的调用。因此活跃度显示在供应商标题与 Telemetry 页，避免归属到错误账户。
+- 未找到数据库或格式不兼容会显示状态，不将缺失记录解释成零调用。
+- 默认读取 `$XDG_DATA_HOME/opencode/opencode.db` 或 `~/.local/share/opencode/opencode.db`。可通过 `API_BALANCE_OPENCODE_DB` 指定另一个路径。数据库以只读方式打开，读取最多等待 8 秒，不创建表或索引。
 
-DeepSeek 使用：
+余额与接口结果来自当前会话手动查询，不跨会话缓存。余额请求失败会替换旧成功状态；请求期间不能删除账户或销毁窗口。
 
-```text
-GET https://api.deepseek.com/user/balance
-Authorization: Bearer <API_KEY>
-```
-
-智谱官方目前没有公开 API Key 余额查询接口。程序会先尝试控制台内部接口；该接口失败时不会影响程序运行，而是调用官方模型列表接口验证 Key，并显示控制台查询提示。
-
-## 错误处理
-
-程序会处理网络超时、HTTP 错误、无效 JSON、空 API Key、重复配置和非法配置文件。Go 的 `401`/`403`、DeepSeek 的余额错误、智谱的欠费或套餐超限错误都会显示在 GUI 中。
-
-## 测试说明
-
-`tests/` 目录用于验证项目的核心逻辑，不需要启动 GUI 或使用真实 API Key。
-
-当前测试覆盖：
-
-- 模糊搜索的匹配和排序
-- API 配置的批量解析、新增和删除
-- DeepSeek 查询响应的解析
-- API Key 请求头的生成
-
-在项目根目录运行：
+## 测试
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-测试使用模拟 HTTP 响应，不会向 OpenCode、DeepSeek 或智谱服务发起真实查询，也不会修改项目中的正式配置文件。
+测试使用临时配置、模拟接口和合成活动数据库，不调用真实供应商。
 
-## 自定义字体
+## 接口参考
 
-字体文件属于本地资源，不会提交到仓库。`.gitignore` 会忽略 `script/ui/fonts/` 下的字体文件，但会保留其中的许可证文本。
-
-### 文件放置位置
-
-将字体文件放置到：
-
-```text
-script/ui/fonts/
-```
-
-当前程序默认查找以下文件：
-
-```text
-SourceHanSansSC-Regular.otf
-SourceHanSansSC-Medium.otf
-SourceHanSansSC-Bold.otf
-JetBrainsMono-Regular.ttf
-```
-
-如果使用上述文件名，只需将字体复制到目录后运行程序即可。程序启动时会通过 `QFontDatabase.addApplicationFont()` 加载字体，加载失败时回退到系统字体。
-
-### 使用其他字体
-
-如果字体文件名不同，需要修改 `script/menu.py` 中的 `load_fonts()` 函数：
-
-```python
-fonts_dir = Path(__file__).with_name("ui") / "fonts"
-regular_id = QFontDatabase.addApplicationFont(
-    str(fonts_dir / "YourSans-Regular.ttf")
-)
-QFontDatabase.addApplicationFont(str(fonts_dir / "YourSans-Bold.ttf"))
-QFontDatabase.addApplicationFont(str(fonts_dir / "YourMono-Regular.ttf"))
-```
-
-然后根据字体文件的实际字体族名称，修改 `script/ui/styles.qss` 中的字体配置：
-
-```css
-QMainWindow {
-    font-family: "Your Sans";
-}
-
-QTextEdit, QLineEdit[role="secret"] {
-    font-family: "Your Mono";
-}
-```
-
-字体族名称应使用字体内部名称，不一定等于文件名。可以使用字体查看器确认名称。若字体包含授权限制，请确保使用方式符合其许可证要求。
+- [OpenCode Providers](https://opencode.ai/docs/providers)
+- [DeepSeek 余额](https://api-docs.deepseek.com/api/get-user-balance)
+- [Kimi 国内余额](https://platform.kimi.com/docs/api/balance) / [国际余额](https://platform.kimi.ai/docs/api/balance)
+- [SiliconFlow 官方 OpenAPI](https://github.com/siliconflow/siliconcloud/blob/main/openapi.yaml)
+- [OpenRouter 密钥](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key) / [管理密钥余额](https://openrouter.ai/docs/api/api-reference/credits/get-remaining-credits)
+- [OpenAI Models](https://developers.openai.com/api/reference/resources/models/methods/list)
+- [Anthropic Models](https://platform.claude.com/docs/en/api/models/list)
+- [Gemini Models](https://ai.google.dev/api/models)
+- [Groq API](https://console.groq.com/docs/api-reference)
+- [Mistral Models](https://docs.mistral.ai/api/endpoint/models)

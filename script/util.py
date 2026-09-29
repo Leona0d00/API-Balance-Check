@@ -8,11 +8,13 @@ import re
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import urlsplit
+from .providers import PROVIDERS
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_ROOT = PROJECT_ROOT / ".config"
-SUPPORTED_PROVIDERS = {"opencode_go", "deepseek", "zhipu"}
+SUPPORTED_PROVIDERS = set(PROVIDERS)
 
 
 class AppError(Exception):
@@ -133,6 +135,10 @@ def write_api(provider: str, api_name: str, apikey: str, **extra: Any) -> str:
         raise AppError(f"Unsupported provider: {provider}")
     if not isinstance(apikey, str) or not apikey.strip():
         raise AppError(f"API key is empty: {provider}/{api_name}")
+    if provider == 'custom':
+        extra['base_url'] = validate_base_url(extra.get('base_url', ''))
+    elif extra.get('base_url'):
+        extra['base_url'] = validate_base_url(extra['base_url'])
     target_dir = CONFIG_ROOT / provider / api_name
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / f"{api_name}.json"
@@ -181,7 +187,15 @@ def parse_batch_payload(payload: str) -> list[dict[str, str]]:
         apikey = item.get("apikey")
         if not all(isinstance(value, str) for value in (provider, api_name, apikey)):
             raise AppError("Each API record needs provider, api_name, and apikey strings")
-        records.append({"provider": provider, "api_name": api_name, "apikey": apikey})
+        records.append({"provider": provider, "api_name": api_name, "apikey": apikey, **{key: item[key] for key in ('base_url', 'note', 'query_mode') if key in item}})
     if not records:
         raise AppError("No API records found")
     return records
+
+
+def validate_base_url(value: str) -> str:
+    value = str(value).strip().rstrip('/')
+    parsed = urlsplit(value)
+    if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise AppError('Base URL 必须是 HTTPS 地址，不能包含凭据、查询参数或片段。')
+    return value
