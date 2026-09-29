@@ -1,0 +1,31 @@
+# Local configuration and secrets
+.config/
+.env
+.env.*
+*.secret
+*.secrets
+*.key
+*.pem
+*.p12
+*.pfx
+*-LICENSE.txt
+
+# Python environments, caches, and test artifacts
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local logs and generated output
+*.log
+*.tmp
+界面效果/
+
+# Local/custom fonts are not committed. Keep license text visible.
+script/ui/fonts/*
+!script/ui/fonts/*.txt
