@@ -26,5 +26,6 @@ htmlcov/
 *.tmp
 界面效果/
 
-# Optional local fonts are never committed.
-script/ui/fonts/
+# Local/custom fonts are not committed. Keep license text visible.
+script/ui/fonts/*
+!script/ui/fonts/*.txt
