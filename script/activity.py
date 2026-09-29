@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from contextlib import closing
 
-ALIASES = {'opencode-go': 'opencode_go', 'opencode': 'opencode_zen', 'zhipuai': 'zhipu', 'google': 'gemini', 'moonshotai': 'moonshot'}
+ALIASES = {'opencode-go': 'opencode_go', 'opencode': 'opencode_zen', 'zhipuai': 'zhipu', 'google': 'gemini', 'moonshotai': 'moonshot', 'mimo': 'xiaomi_mimo'}
 
 
 def default_database():

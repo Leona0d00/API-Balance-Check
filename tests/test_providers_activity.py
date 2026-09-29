@@ -49,6 +49,15 @@ class ProviderTests(unittest.TestCase):
             self.assertNotIn('Authorization', args.kwargs['headers'])
             self.assertEqual(result['kind'], 'connection')
 
+    def test_xiaomi_mimo_official_models_endpoint(self):
+        result, args = self.query('xiaomi_mimo', {'object': 'list', 'data': [{'id': 'mimo-v2.6-pro'}]})
+        self.assertEqual(args.args[1], 'https://api.xiaomimimo.com/v1/models')
+        self.assertEqual(args.kwargs['headers']['Authorization'], 'Bearer test-key')
+        self.assertEqual(result['kind'], 'connection')
+        self.assertEqual(result['model_count'], 1)
+        self.assertNotIn('balance', result)
+        self.assertEqual(activity.ALIASES['mimo'], 'xiaomi_mimo')
+
     def test_custom_url_and_extra_round_trip(self):
         payload = {'custom': {'api_name': 'proxy', 'apikey': 'test-key', 'base_url': 'https://example.org/v1', 'note': '代理'}}
         identifier = function.add_api(payload)[0]
