@@ -58,6 +58,31 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn('balance', result)
         self.assertEqual(activity.ALIASES['mimo'], 'xiaomi_mimo')
 
+    def test_minimax_token_plan_quota_regions_and_excluded_models(self):
+        payload = {'base_resp': {'status_code': 0}, 'model_remains': [
+            {'model_name': 'general', 'current_interval_remaining_percent': 64,
+             'current_weekly_remaining_percent': 91, 'current_interval_total_count': 0,
+             'current_weekly_total_count': 0, 'current_interval_status': 1},
+            {'model_name': 'video', 'current_interval_remaining_percent': 100,
+             'current_weekly_remaining_percent': 100, 'current_interval_total_count': 0,
+             'current_weekly_total_count': 0, 'current_interval_status': 3},
+        ]}
+        for provider, host in [('minimax_plan_cn', 'www.minimaxi.com'),
+                               ('minimax_plan_global', 'www.minimax.io')]:
+            with self.subTest(provider=provider):
+                result, args = self.query(provider, payload)
+                self.assertEqual(args.args[1], f'https://{host}/v1/token_plan/remains')
+                self.assertEqual(result['kind'], 'plan_quota')
+                self.assertEqual(result['quotas'], [{'model': 'general', 'rolling': 64.0, 'weekly': 91.0}])
+
+    def test_minimax_rejects_failed_or_missing_quota(self):
+        identifier = util.write_api('minimax_plan_cn', 'main', 'test-key')
+        for payload in ({'base_resp': {'status_code': 1001}, 'model_remains': []},
+                        {'base_resp': {'status_code': 0}, 'model_remains': []}):
+            with patch('script.function.requests.request', return_value=Mock(ok=True, status_code=200, json=Mock(return_value=payload))):
+                with self.assertRaises(util.AppError):
+                    function.select_api(identifier)
+
     def test_custom_url_and_extra_round_trip(self):
         payload = {'custom': {'api_name': 'proxy', 'apikey': 'test-key', 'base_url': 'https://example.org/v1', 'note': '代理'}}
         identifier = function.add_api(payload)[0]

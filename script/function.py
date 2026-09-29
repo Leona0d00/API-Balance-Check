@@ -56,6 +56,8 @@ def select_api(identifier: str) -> dict[str, Any]:
         return _query_deepseek(record)
     if provider == "zhipu":
         return _query_zhipu(record)
+    if provider in {'minimax_plan_cn', 'minimax_plan_global'}:
+        return _query_minimax_plan(record)
     if provider in PROVIDERS:
         return _query_provider(record)
     raise AppError(f"Unsupported provider: {provider}")
@@ -148,6 +150,37 @@ def _query_zhipu(record: dict[str, Any]) -> dict[str, Any]:
         }
     except AppError as exc:
         raise AppError(f"Zhipu key validation failed: {exc}") from exc
+
+
+def _query_minimax_plan(record: dict[str, Any]) -> dict[str, Any]:
+    provider = record['provider']
+    url = PROVIDERS[provider]['base'] + '/token_plan/remains'
+    data = _json_response(_request('GET', url, record['apikey']))
+    if not isinstance(data, dict):
+        raise AppError('MiniMax 未返回套餐数据。')
+    status = data.get('base_resp')
+    if isinstance(status, dict) and status.get('status_code') != 0:
+        raise AppError('MiniMax 套餐查询失败。')
+    rows = data.get('model_remains')
+    if not isinstance(rows, list):
+        raise AppError('MiniMax 未返回套餐额度。')
+    quotas = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        if item.get('current_interval_total_count') == 0 and item.get('current_weekly_total_count') == 0 and item.get('current_interval_status') == 3:
+            continue  # Not included in this plan; the API may misleadingly report 100% remaining.
+        try:
+            rolling = Decimal(str(item['current_interval_remaining_percent']))
+            weekly = Decimal(str(item['current_weekly_remaining_percent']))
+        except (KeyError, InvalidOperation, TypeError):
+            continue
+        if not all(value.is_finite() and 0 <= value <= 100 for value in (rolling, weekly)):
+            continue
+        quotas.append({'model': str(item.get('model_name') or '模型'), 'rolling': float(rolling), 'weekly': float(weekly)})
+    if not quotas:
+        raise AppError('MiniMax 未返回可用套餐额度。')
+    return {'key': record['key'], 'provider': provider, 'kind': 'plan_quota', 'quotas': quotas}
 
 
 def _query_provider(record: dict[str, Any]) -> dict[str, Any]:

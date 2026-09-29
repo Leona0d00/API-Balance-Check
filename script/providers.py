@@ -7,6 +7,8 @@ PROVIDERS = {
     'zhipu': {'label': 'Zhipu / 智谱', 'group': '国内', 'capability': '余额尝试 / 密钥检查', 'base': 'https://open.bigmodel.cn/api/paas/v4'},
     'moonshot': {'label': 'Kimi / Moonshot CN', 'group': '国内', 'capability': '余额', 'base': 'https://api.moonshot.cn/v1'},
     'xiaomi_mimo': {'label': 'Xiaomi MiMo / 小米', 'group': '国内', 'capability': '连接检查', 'base': 'https://api.xiaomimimo.com/v1'},
+    'minimax_plan_cn': {'label': 'MiniMax Token Plan CN', 'group': '订阅', 'capability': '5 小时 / 周额度', 'base': 'https://www.minimaxi.com/v1'},
+    'minimax_plan_global': {'label': 'MiniMax Token Plan Global', 'group': '订阅', 'capability': '5 小时 / 周额度', 'base': 'https://www.minimax.io/v1'},
     'moonshot_global': {'label': 'Kimi / Moonshot Global', 'group': '国际', 'capability': '余额', 'base': 'https://api.moonshot.ai/v1'},
     'siliconflow': {'label': 'SiliconFlow / 硅基流动', 'group': '聚合', 'capability': '余额', 'base': 'https://api.siliconflow.cn/v1'},
     'openrouter': {'label': 'OpenRouter', 'group': '聚合', 'capability': '密钥额度 / 实际用量', 'base': 'https://openrouter.ai/api/v1'},

@@ -22,6 +22,7 @@ python -m script.menu
 | DeepSeek | 账户余额 | 充值余额与赠金 |
 | Kimi / Moonshot CN、Global | 账户余额 | 分别使用国内与国际 API 地址，币种 CNY / USD |
 | Xiaomi MiMo / 小米 | 模型列表连接检查 | 普通 MiMo API `sk-` 密钥；余额需在小米控制台查看，Token Plan 密钥与普通 API 密钥不通用 |
+| MiniMax Token Plan CN、Global | 5 小时 / 周剩余额度 | 使用订阅密钥查询官方额度接口；按量付费余额在 MiniMax 控制台查看 |
 | SiliconFlow | 账户余额 | 使用 user/info 的 totalBalance |
 | OpenRouter | 密钥额度和实际消耗 / 账户余额 | 普通密钥查询自身额度与日、周、月消耗；账户余额模式需要管理密钥 |
 | 智谱 | 尝试余额，失败后检查密钥 | 保留原有控制台接口回退策略 |
@@ -73,6 +74,8 @@ python -m unittest discover -s tests -v
 - [OpenCode Providers](https://opencode.ai/docs/providers)
 - [Xiaomi MiMo 模型列表](https://mimo.mi.com/docs/en-US/api/model/list-models)
 - [Xiaomi MiMo OpenCode 配置与密钥区别](https://mimo.mi.com/docs/en-US/tokenplan/integration/opencode)
+- [MiniMax Token Plan 剩余额度接口（国际）](https://platform.minimax.io/subscribe/token-plan)
+- [MiniMax Token Plan 剩余额度接口（国内）](https://platform.minimaxi.com/subscribe/token-plan)
 - [DeepSeek 余额](https://api-docs.deepseek.com/api/get-user-balance)
 - [Kimi 国内余额](https://platform.kimi.com/docs/api/balance) / [国际余额](https://platform.kimi.ai/docs/api/balance)
 - [SiliconFlow 官方 OpenAPI](https://github.com/siliconflow/siliconcloud/blob/main/openapi.yaml)

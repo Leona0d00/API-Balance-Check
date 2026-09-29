@@ -85,6 +85,9 @@ class ActivityWorker(QObject):
 
 
 def result_state(result: dict[str, Any]) -> str:
+    if result.get('kind') == 'plan_quota':
+        used = max(100 - value for item in result['quotas'] for value in (item['rolling'], item['weekly']))
+        return 'error' if used >= 90 else 'warning' if used >= 70 else 'success'
     if result.get("kind") == "usage":
         values = [result["data"][key].get("percent", 0) for key in ("rolling", "weekly", "monthly")]
         return "error" if max(values) >= 90 else "warning" if max(values) >= 70 else "success"
@@ -243,6 +246,17 @@ class UsageResultWidget(QFrame):
                 reset.setWordWrap(True)
                 box.addWidget(reset)
                 self.layout.addWidget(block)
+        elif result.get('kind') == 'plan_quota':
+            for quota in result['quotas']:
+                self.layout.addWidget(QLabel(quota['model'], objectName='cardTitle'))
+                for field, title in (('rolling', '5 小时'), ('weekly', '本周')):
+                    remaining = quota[field]
+                    self.layout.addWidget(QLabel(f'{title}剩余 {remaining:g}%', objectName='usageValue'))
+                    progress = QProgressBar()
+                    progress.setRange(0, 100)
+                    progress.setValue(round(remaining))
+                    progress.setTextVisible(False)
+                    self.layout.addWidget(progress)
         elif result.get("provider") == "deepseek":
             for info in data.get("balance_infos", []):
                 block = QWidget()
@@ -848,6 +862,9 @@ def format_result(result: dict[str, Any]) -> str:
             item = data[key]
             lines.append(f"{label}：{item.get('percent', '?')}%")
             lines.append(f"重置时间：{item.get('resetsAt', '?')}")
+    elif result.get('kind') == 'plan_quota':
+        for quota in result['quotas']:
+            lines.append(f"{quota['model']}：5 小时剩余 {quota['rolling']:g}%，本周剩余 {quota['weekly']:g}%")
     elif result.get("kind") == "balance" and "balance" in result:
         lines.append(f"余额：{result['balance']} {result['currency']}")
     elif result.get("kind") == "key_usage":
