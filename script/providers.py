@@ -1,6 +1,7 @@
 """Provider catalog: capabilities and endpoints live in one place."""
 
 PROVIDERS = {
+    'codex_subscription': {'label': 'OpenAI Codex / GPT 订阅', 'group': '本机', 'capability': '5 小时 / 周额度', 'base': '', 'built_in': True},
     'opencode_go': {'label': 'OpenCode Go', 'group': '订阅', 'capability': '用量窗口', 'base': 'https://opencode.ai/zen/go/v1'},
     'opencode_zen': {'label': 'OpenCode Zen', 'group': '聚合', 'capability': '连接检查', 'base': 'https://opencode.ai/zen/v1'},
     'deepseek': {'label': 'DeepSeek', 'group': '国内', 'capability': '余额', 'base': 'https://api.deepseek.com'},

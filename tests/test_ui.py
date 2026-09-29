@@ -22,7 +22,7 @@ class UiTests(unittest.TestCase):
         self.root_patch = patch.object(util, 'CONFIG_ROOT', Path(self.temp.name))
         self.root_patch.start()
         util.write_api('deepseek', 'main', 'test-only')
-        self.window = menu.MainWindow()
+        self.window = menu.MainWindow(auto_query_codex=False)
         self.window.show()
         self.result = {'key': 'deepseek/main', 'provider': 'deepseek', 'kind': 'balance', 'data': {'is_available': True, 'balance_infos': [{'currency': 'CNY', 'total_balance': '12.50'}]}}
 
@@ -63,6 +63,37 @@ class UiTests(unittest.TestCase):
         self.assertEqual(self.window.overview.healthy.value_label.text(), '0')
         self.assertIn('模拟网络超时', self.window.manager.result_text)
         self.assertTrue(self.window.manager.query_button.isEnabled())
+
+    @patch('script.menu.select_api')
+    def test_overview_query_updates_in_place(self, query):
+        query.return_value = self.result
+        self.window.pages.setCurrentWidget(self.window.overview)
+        self.window.query_api('deepseek/main', stay_on_overview=True)
+        self.wait_worker()
+        self.assertEqual(self.window.pages.currentWidget(), self.window.overview)
+        self.assertEqual(self.window.cache['deepseek/main']['result']['kind'], 'balance')
+
+    def test_overview_reflows_and_collapses_header(self):
+        util.write_api('xiaomi_mimo', 'win10', 'test-only')
+        util.write_api('zhipu', 'win10', 'test-only')
+        self.window.refresh_all()
+        self.window.resize(1050, 800)
+        self.app.processEvents()
+        overview = self.window.overview
+        self.assertEqual(overview._column_count(), 2)
+        column_hosts = [overview.cards_layout.itemAt(index).widget() for index in range(overview.cards_layout.count())]
+        self.assertEqual(sorted(host.layout().count() for host in column_hosts), [2, 2])
+        self.assertTrue(all(overview.cards_layout.getItemPosition(index)[2:] == (1, 1)
+                            for index in range(overview.cards_layout.count())))
+        self.window.resize(1500, 800)
+        self.app.processEvents()
+        self.assertEqual(overview._column_count(), 3)
+        self.assertEqual(sum(overview.cards_layout.itemAt(index).widget().layout().count()
+                             for index in range(overview.cards_layout.count())), 4)
+        overview._scroll_changed(30)
+        self.assertFalse(overview.hero.isVisible())
+        overview._scroll_changed(0)
+        self.assertTrue(overview.hero.isVisible())
 
     def test_result_replacement_hides_previous_content(self):
         view = self.window.manager.result_view
