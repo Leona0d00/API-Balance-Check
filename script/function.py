@@ -46,9 +46,13 @@ def del_api(identifier: str) -> None:
 
 
 def select_api(identifier: str) -> dict[str, Any]:
-    record = find_api(identifier)
+    return query_api_record(find_api(identifier))
+
+
+def query_api_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Query an already loaded account, without scanning configuration again."""
     if not record["apikey"].strip():
-        raise AppError(f"API key is empty: {identifier}")
+        raise AppError(f"API key is empty: {record['key']}")
     provider = record["provider"]
     if provider == "opencode_go":
         return _query_opencode_go(record)
