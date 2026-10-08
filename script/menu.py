@@ -203,7 +203,7 @@ class UsageResultWidget(QFrame):
         if result.get("kind") == "error":
             self.error(result.get("message", "查询失败"))
         elif result.get("kind") == "usage":
-            for key, title in (("rolling", "5 小时"), ("weekly", "本周"), ("monthly", "本月")):
+            for key, title in (("rolling", "5 小时（used）"), ("weekly", "本周（used）"), ("monthly", "本月（used）")):
                 item = data[key]
                 percent = float(item.get("percent", 0))
                 block = QWidget()
@@ -752,7 +752,7 @@ def format_result(result: dict[str, Any]) -> str:
                 f"赠金余额：{info.get('granted_balance', '?')}",
             ])
     elif result.get("kind") == "usage":
-        for key, label in (("rolling", "5 小时"), ("weekly", "本周"), ("monthly", "本月")):
+        for key, label in (("rolling", "5 小时（used）"), ("weekly", "本周（used）"), ("monthly", "本月（used）")):
             item = data[key]
             lines.append(f"{label}：{item.get('percent', '?')}%")
             lines.append(f"重置时间：{item.get('resetsAt', '?')}")
